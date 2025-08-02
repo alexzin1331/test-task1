@@ -18,13 +18,13 @@ func NewCurrencyHandler(storage *storage.Storage) *CurrencyHandler {
 }
 
 // AddCurrency godoc
-// @Summary Добавить криптовалюту в отслеживание
-// @Description Начинает сбор цен для указанной криптовалюты с интервалом 15 секунд
+// @Summary Add cryptocurrency to tracking
+// @Description Starts collecting prices for specified cryptocurrency with 15 seconds interval
 // @Tags currency
 // @Accept json
 // @Produce json
-// @Param input body models.AddCurrencyRequest true "Данные криптовалюты"
-// @Success 200 {object} models.PriceResponse
+// @Param input body models.AddCurrencyRequest true "Currency data"
+// @Success 200
 // @Failure 400 {object} models.ErrorResponse
 // @Failure 500 {object} models.ErrorResponse
 // @Router /currency/add [post]
@@ -40,16 +40,15 @@ func (h *CurrencyHandler) AddCurrency(c *gin.Context) {
 }
 
 // RemoveCurrency godoc
-// @Summary Удалить криптовалюту из отслеживания
-// @Description Прекращает сбор цен для указанной криптовалюты
+// @Summary Remove cryptocurrency from tracking
+// @Description Stops collecting prices for specified cryptocurrency
 // @Tags currency
 // @Accept json
 // @Produce json
-// @Param input body models.RemoveCurrencyRequest true "Данные криптовалюты"
+// @Param input body models.RemoveCurrencyRequest true "Currency data"
 // @Success 200
 // @Failure 400 {object} models.ErrorResponse
-// @Failure 500 {object} models.ErrorResponse
-// @Router /currency/remove [post]
+// @Failure 500 {object} models.Error
 func (h *CurrencyHandler) RemoveCurrency(c *gin.Context) {
 	var req models.RemoveCurrencyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -62,12 +61,12 @@ func (h *CurrencyHandler) RemoveCurrency(c *gin.Context) {
 }
 
 // GetPrice godoc
-// @Summary Получить цену криптовалюты
-// @Description Возвращает цену криптовалюты на указанный момент времени или ближайшую доступную
+// @Summary Get cryptocurrency price
+// @Description Returns cryptocurrency price at specified time or nearest available
 // @Tags currency
 // @Accept json
 // @Produce json
-// @Param input body models.PriceRequest true "Параметры запроса"
+// @Param input body models.PriceRequest true "Request parameters"
 // @Success 200 {object} models.PriceResponse
 // @Failure 400 {object} models.ErrorResponse
 // @Failure 404 {object} models.ErrorResponse
