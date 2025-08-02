@@ -370,6 +370,19 @@ func (s *Storage) Shutdown() {
 	}
 }
 
+// RemoveCurrency stops tracking cryptocurrency and removes from active list.
+// Parameters:
+// - coin: cryptocurrency symbol to remove
+func (s *Storage) RemoveCurrency(coin string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if stopChan, exists := s.activeCoins[coin]; exists {
+		close(stopChan)
+		delete(s.activeCoins, coin)
+	}
+}
+
 func abs(n int64) int64 {
 	if n < 0 {
 		return -n
