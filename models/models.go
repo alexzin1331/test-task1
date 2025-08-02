@@ -40,3 +40,26 @@ func MustLoad(path string) *Config {
 	}
 	return conf
 }
+
+type AddCurrencyRequest struct {
+	Coin string `json:"coin" binding:"required" example:"BTC"`
+}
+
+type RemoveCurrencyRequest struct {
+	Coin string `json:"coin" binding:"required" example:"BTC"`
+}
+
+type PriceRequest struct {
+	Coin      string `json:"coin" binding:"required" example:"BTC"`
+	Timestamp *int64 `json:"timestamp,omitempty" example:"1736500490"`
+}
+
+type PriceResponse struct {
+	Coin      string  `json:"coin" example:"BTC"`
+	Price     float64 `json:"price" example:"48523.42"`
+	Timestamp int64   `json:"timestamp" example:"1736500490"`
+}
+
+type ErrorResponse struct {
+	Error string `json:"error" example:"invalid request"`
+}
