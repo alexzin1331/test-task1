@@ -48,7 +48,7 @@ func (h *CurrencyHandler) AddCurrency(c *gin.Context) {
 // @Param input body models.RemoveCurrencyRequest true "Currency data"
 // @Success 200
 // @Failure 400 {object} models.ErrorResponse
-// @Failure 500 {object} models.Error
+// @Failure 500 {object} models.ErrorResponse
 func (h *CurrencyHandler) RemoveCurrency(c *gin.Context) {
 	var req models.RemoveCurrencyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -79,7 +79,6 @@ func (h *CurrencyHandler) GetPrice(c *gin.Context) {
 		return
 	}
 
-	// Если timestamp не указан, используем текущее время
 	timestamp := time.Now().Unix()
 	if req.Timestamp != nil {
 		timestamp = *req.Timestamp
