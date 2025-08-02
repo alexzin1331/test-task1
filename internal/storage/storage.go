@@ -9,32 +9,49 @@ import (
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"log"
+	"strconv"
+	"sync"
 	"test-task1/models"
+	kraken "test-task1/pkg/kraken-api"
 	"time"
 )
 
 const (
-	migrationPath = "file://migrations"
-)
-
-const (
-	cacheLimit = 1000
+	migrationPath       = "file://migrations"
+	cacheTTL            = 10 * time.Minute
+	errorCacheTTL       = 1 * time.Minute
+	priceUpdateInterval = 15 * time.Second
+	dataRetention       = 4 * time.Hour
+	maxTokenCount       = 100
 )
 
 type Storage struct {
-	db    *sql.DB
-	redis *redis.Client
+	db          *sql.DB
+	redis       *redis.Client
+	activeCoins map[string]chan struct{}
+	shutdown    chan struct{}
+	wg          sync.WaitGroup
+	mutex       sync.RWMutex
 }
 
 func initRedis(config models.Config) (*redis.Client, error) {
-	var rdb *redis.Client
-	rdb = redis.NewClient(&redis.Options{
+	rdb := redis.NewClient(&redis.Options{
 		Addr:     config.RDBConf.RedisAddress,
 		Password: config.RDBConf.RedisPassword,
 		DB:       config.RDBConf.RedisDB,
 	})
-	_, err := rdb.Ping(context.Background()).Result()
-	if err != nil {
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := rdb.ConfigSet(ctx, "maxmemory", "100mb").Result(); err != nil {
+		log.Printf("Warning: failed to set Redis maxmemory: %v", err)
+	}
+	if _, err := rdb.ConfigSet(ctx, "maxmemory-policy", "allkeys-lru").Result(); err != nil {
+		return nil, fmt.Errorf("failed to configure Redis LRU: %v", err)
+	}
+
+	if _, err := rdb.Ping(ctx).Result(); err != nil {
 		return nil, fmt.Errorf("failed to connect to Redis: %v", err)
 	}
 	return rdb, nil
@@ -72,34 +89,33 @@ func runMigrations(db *sql.DB) error {
 // New create new storage with Redis and Postgres
 func New(c models.Config) (*Storage, error) {
 	const op = "storage.connection"
-	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", c.DBConf.Host, c.DBConf.Port, c.DBConf.User, c.DBConf.Password, c.DBConf.DBName)
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		c.DBConf.Host, c.DBConf.Port, c.DBConf.User, c.DBConf.Password, c.DBConf.DBName)
+
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", op, err)
 	}
-	//attempting to reconnect to the database.
+
 	if err = waitForDB(db, 5, 1*time.Second); err != nil {
 		return nil, fmt.Errorf("%s: %v", op, err)
 	}
-	//test connection
-	if err = db.Ping(); err != nil {
-		return nil, fmt.Errorf("%s: %v", op, err)
-	}
-	log.Println("Connection is ready")
+
 	rdb, err := initRedis(c)
 	if err != nil {
 		return nil, fmt.Errorf("%s (initRedis): %v", op, err)
 	}
+
 	s := &Storage{
-		db:    db,
-		redis: rdb,
+		db:          db,
+		redis:       rdb,
+		activeCoins: make(map[string]chan struct{}),
+		shutdown:    make(chan struct{}),
 	}
 
-	//create tables in PostgreSQL
 	if err = runMigrations(db); err != nil {
-		return &Storage{}, fmt.Errorf("failed to make migrations: %v", err)
+		return nil, fmt.Errorf("failed to make migrations: %v", err)
 	}
-	log.Printf("\nmigraitions is success\n")
 
 	return s, nil
 }
