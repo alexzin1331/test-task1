@@ -1,12 +1,12 @@
 server:
-  host: ":8081"
+  host: ":8080"
   timeout: 10s
 database:
   port: "5432"
   user: "postgres"
-  password: "alex1234"
-  dbname: "postgres"
-  host: "postgres"
+  password: "password"
+  dbname: "crypto"
+  host: "db" 
 redis:
   redis_address: "redis:6379"
   redis_password: ""

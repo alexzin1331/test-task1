@@ -1,0 +1,113 @@
+definitions:
+  models.AddCurrencyRequest:
+    properties:
+      coin:
+        example: BTC
+        type: string
+    required:
+    - coin
+    type: object
+  models.ErrorResponse:
+    properties:
+      error:
+        example: invalid request
+        type: string
+    type: object
+  models.PriceRequest:
+    properties:
+      coin:
+        example: BTC
+        type: string
+      timestamp:
+        example: 1736500490
+        type: integer
+    required:
+    - coin
+    type: object
+  models.PriceResponse:
+    properties:
+      coin:
+        example: BTC
+        type: string
+      price:
+        example: 48523.42
+        type: number
+      timestamp:
+        example: 1736500490
+        type: integer
+    type: object
+  models.RemoveCurrencyRequest:
+    properties:
+      coin:
+        example: BTC
+        type: string
+    required:
+    - coin
+    type: object
+info:
+  contact: {}
+paths:
+  /currency/add:
+    post:
+      consumes:
+      - application/json
+      description: Starts collecting prices for specified cryptocurrency with 15 seconds
+        interval
+      parameters:
+      - description: Currency data
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/models.AddCurrencyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Add cryptocurrency to tracking
+      tags:
+      - currency
+  /currency/price:
+    post:
+      consumes:
+      - application/json
+      description: Returns cryptocurrency price at specified time or nearest available
+      parameters:
+      - description: Request parameters
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/models.PriceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.PriceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Get cryptocurrency price
+      tags:
+      - currency
+swagger: "2.0"

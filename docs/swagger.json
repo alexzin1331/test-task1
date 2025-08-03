@@ -1,0 +1,171 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "contact": {}
+    },
+    "paths": {
+        "/currency/add": {
+            "post": {
+                "description": "Starts collecting prices for specified cryptocurrency with 15 seconds interval",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "currency"
+                ],
+                "summary": "Add cryptocurrency to tracking",
+                "parameters": [
+                    {
+                        "description": "Currency data",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.AddCurrencyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/currency/price": {
+            "post": {
+                "description": "Returns cryptocurrency price at specified time or nearest available",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "currency"
+                ],
+                "summary": "Get cryptocurrency price",
+                "parameters": [
+                    {
+                        "description": "Request parameters",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.PriceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.PriceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "models.AddCurrencyRequest": {
+            "type": "object",
+            "required": [
+                "coin"
+            ],
+            "properties": {
+                "coin": {
+                    "type": "string",
+                    "example": "BTC"
+                }
+            }
+        },
+        "models.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string",
+                    "example": "invalid request"
+                }
+            }
+        },
+        "models.PriceRequest": {
+            "type": "object",
+            "required": [
+                "coin"
+            ],
+            "properties": {
+                "coin": {
+                    "type": "string",
+                    "example": "BTC"
+                },
+                "timestamp": {
+                    "type": "integer",
+                    "example": 1736500490
+                }
+            }
+        },
+        "models.PriceResponse": {
+            "type": "object",
+            "properties": {
+                "coin": {
+                    "type": "string",
+                    "example": "BTC"
+                },
+                "price": {
+                    "type": "number",
+                    "example": 48523.42
+                },
+                "timestamp": {
+                    "type": "integer",
+                    "example": 1736500490
+                }
+            }
+        },
+        "models.RemoveCurrencyRequest": {
+            "type": "object",
+            "required": [
+                "coin"
+            ],
+            "properties": {
+                "coin": {
+                    "type": "string",
+                    "example": "BTC"
+                }
+            }
+        }
+    }
+}

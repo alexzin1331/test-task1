@@ -2,18 +2,24 @@ package handlers
 
 import (
 	"net/http"
+	kraken_api "test-task1/pkg/kraken-api"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"test-task1/internal/storage"
 	"test-task1/models"
 )
 
-type CurrencyHandler struct {
-	storage *storage.Storage
+type CryptoServer interface {
+	AddCurrency(coin string)
+	RemoveCurrency(coin string)
+	GetPrice(coin string, timestamp int64) (float64, error)
 }
 
-func NewCurrencyHandler(storage *storage.Storage) *CurrencyHandler {
+type CurrencyHandler struct {
+	storage CryptoServer
+}
+
+func NewCurrencyHandler(storage CryptoServer) *CurrencyHandler {
 	return &CurrencyHandler{storage: storage}
 }
 
@@ -35,6 +41,15 @@ func (h *CurrencyHandler) AddCurrency(c *gin.Context) {
 		return
 	}
 
+	// Check if currency is supported by Kraken
+	kraken_api.InitKrakenPairs()
+	if _, ok := kraken_api.KrakenPairs[req.Coin]; !ok {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error: "currency not supported",
+		})
+		return
+	}
+
 	h.storage.AddCurrency(req.Coin)
 	c.Status(http.StatusOK)
 }
@@ -49,6 +64,7 @@ func (h *CurrencyHandler) AddCurrency(c *gin.Context) {
 // @Success 200
 // @Failure 400 {object} models.ErrorResponse
 // @Failure 500 {object} models.ErrorResponse
+// @Router /currency/remove [post]
 func (h *CurrencyHandler) RemoveCurrency(c *gin.Context) {
 	var req models.RemoveCurrencyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

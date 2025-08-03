@@ -63,3 +63,12 @@ type PriceResponse struct {
 type ErrorResponse struct {
 	Error string `json:"error" example:"invalid request"`
 }
+
+type KrakenTickerResponse struct {
+	Error  []string                       `json:"error"`
+	Result map[string]KrakenTickerDetails `json:"result"`
+}
+
+type KrakenTickerDetails struct {
+	C []string `json:"c"`
+}

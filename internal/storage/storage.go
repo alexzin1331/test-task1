@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/go-redis/redis/v8"
 	"github.com/golang-migrate/migrate/v4"
@@ -10,6 +11,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"test-task1/models"
 	kraken "test-task1/pkg/kraken-api"
@@ -17,19 +19,19 @@ import (
 )
 
 const (
-	migrationPath       = "file://migrations"
-	cacheTTL            = 10 * time.Minute
-	errorCacheTTL       = 1 * time.Minute
-	priceUpdateInterval = 15 * time.Second
+	migrationPath = "file://migrations"
+	cacheTTL      = 10 * time.Minute
+	//errorCacheTTL       = 1 * time.Minute
+	priceUpdateInterval = 5 * time.Second
 	dataRetention       = 4 * time.Hour
 	maxTokenCount       = 100
 )
 
 type Storage struct {
-	db          *sql.DB
-	redis       *redis.Client
-	activeCoins map[string]chan struct{}
-	shutdown    chan struct{}
+	DB          *sql.DB
+	Redis       *redis.Client
+	ActiveCoins map[string]chan struct{}
+	Shutdwn     chan struct{}
 	wg          sync.WaitGroup
 	mutex       sync.RWMutex
 }
@@ -107,10 +109,10 @@ func New(c models.Config) (*Storage, error) {
 	}
 
 	s := &Storage{
-		db:          db,
-		redis:       rdb,
-		activeCoins: make(map[string]chan struct{}),
-		shutdown:    make(chan struct{}),
+		DB:          db,
+		Redis:       rdb,
+		ActiveCoins: make(map[string]chan struct{}),
+		Shutdwn:     make(chan struct{}),
 	}
 
 	if err = runMigrations(db); err != nil {
@@ -143,12 +145,12 @@ func (s *Storage) AddCurrency(coin string) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	if _, exists := s.activeCoins[coin]; exists {
+	if _, exists := s.ActiveCoins[coin]; exists {
 		return
 	}
 
 	stopChan := make(chan struct{})
-	s.activeCoins[coin] = stopChan
+	s.ActiveCoins[coin] = stopChan
 
 	s.wg.Add(1)
 	go func() {
@@ -177,13 +179,14 @@ func (s *Storage) startCollecting(coin string, stopChan <-chan struct{}) {
 			}
 
 			timestamp := time.Now().Unix()
+			log.Printf("%s: %f, %d", coin, price, timestamp)
 			s.SaveCurrency(coin, price, timestamp)
 
-			s.updateCache(coin, price, timestamp)
+			s.UpdateCache(coin, price, timestamp)
 
 		case <-stopChan:
 			return
-		case <-s.shutdown:
+		case <-s.Shutdwn:
 			return
 		}
 	}
@@ -194,37 +197,65 @@ func (s *Storage) startCollecting(coin string, stopChan <-chan struct{}) {
 // - coin: cryptocurrency symbol
 // - price: current price
 // - timestamp: Unix timestamp of price
-func (s *Storage) updateCache(coin string, price float64, timestamp int64) {
+func (s *Storage) UpdateCache(coin string, price float64, timestamp int64) {
 	ctx := context.Background()
-	key := coin
+	key := fmt.Sprintf("token:%s", coin)
 
-	if err := s.redis.HSet(ctx, key, fmt.Sprintf("%d", timestamp), price).Err(); err != nil {
-		log.Printf("Failed to update cache for %s: %v", coin, err)
+	pipe := s.Redis.Pipeline()
+	pipe.ZAdd(ctx, key, &redis.Z{
+		Score:  float64(timestamp),
+		Member: fmt.Sprintf("%d:%f", timestamp, price),
+	})
+
+	pipe.ZRemRangeByScore(ctx, key, "0", strconv.FormatInt(time.Now().Add(-dataRetention).Unix(), 10))
+
+	pipe.Expire(ctx, key, cacheTTL)
+	pipe.ZAdd(ctx, "token:lru", &redis.Z{
+		Score:  float64(time.Now().Unix()),
+		Member: coin,
+	})
+
+	if count, err := pipe.ZCard(ctx, "token:lru").Result(); err == nil && count > maxTokenCount {
+		pipe.ZPopMin(ctx, "token:lru", 1)
 	}
 
-	expirationTime := time.Now().Add(-dataRetention).Unix()
-	//get all values
-	fields, err := s.redis.HKeys(ctx, key).Result()
-	if err != nil {
-		log.Printf("Failed to get cache keys for %s: %v", coin, err)
-		return
+	if _, err := pipe.Exec(ctx); err != nil {
+		log.Printf("Cache update failed for %s: %v", coin, err)
+	}
+}
+
+func (s *Storage) GetFromCache(ctx context.Context, key string, timestamp int64) (float64, error) {
+
+	members, err := s.Redis.ZRangeByScore(ctx, key, &redis.ZRangeBy{
+		Min: strconv.FormatInt(timestamp-300, 10),
+		Max: strconv.FormatInt(timestamp+300, 10),
+	}).Result()
+
+	if err != nil || len(members) == 0 {
+		return 0, errors.New("no cached data")
 	}
 
-	//iterate for all values and if this timestamp less than now()-4_hour then delete (delete old lines)
-	for _, field := range fields {
-		ts, err := strconv.ParseInt(field, 10, 64)
-		if err != nil {
-			continue
-		}
+	parts := splitMember(members[0])
+	return strconv.ParseFloat(parts[1], 64)
+}
 
-		if ts < expirationTime {
-			if err := s.redis.HDel(ctx, key, field).Err(); err != nil {
-				log.Printf("Failed to delete expired cache for %s: %v", coin, err)
-			}
-		}
-	}
-	//update for lru
-	s.redis.Expire(ctx, key, cacheTTL)
+func (s *Storage) getFromDB(coin string, timestamp int64) (float64, int64, error) {
+	var price float64
+	var dbTimestamp int64
+	err := s.DB.QueryRow(`
+		SELECT price, timestamp 
+		FROM currencies 
+		WHERE coin = $1 
+		ORDER BY ABS(timestamp - $2) 
+		LIMIT 1`,
+		coin, timestamp,
+	).Scan(&price, &dbTimestamp)
+
+	return price, dbTimestamp, err
+}
+
+func splitMember(member string) []string {
+	return strings.Split(member, ":")
 }
 
 // SaveCurrency saves data on the price of cryptocurrencies to the database.
@@ -234,7 +265,7 @@ func (s *Storage) updateCache(coin string, price float64, timestamp int64) {
 // - price: the current price
 // - timestamp: a timestamp in Unix format
 func (s *Storage) SaveCurrency(coin string, price float64, timestamp int64) {
-	_, err := s.db.Exec(
+	_, err := s.DB.Exec(
 		"INSERT INTO currencies (coin, price, timestamp) VALUES ($1, $2, $3)",
 		coin, price, timestamp,
 	)
@@ -253,119 +284,42 @@ func (s *Storage) SaveCurrency(coin string, price float64, timestamp int64) {
 // - price: the price of the cryptocurrency
 // - error: error if the price could not be found
 func (s *Storage) GetPrice(coin string, timestamp int64) (float64, error) {
-	const op = "storage.GetPrice"
 	ctx := context.Background()
-	key := coin
-	//if token cached then take it from redis
-	Cached := s.isTokenCached(coin)
-	if Cached {
-		price, err := s.redis.HGet(ctx, key, fmt.Sprintf("%d", timestamp)).Float64()
-		if err == nil {
-			s.redis.Expire(ctx, key, cacheTTL)
-			return price, nil
-		}
-
-		if nearestPrice, err := s.findNearestCachedPrice(ctx, key, timestamp); err == nil {
-			return nearestPrice, nil
-		}
+	key := fmt.Sprintf("token:%s", coin)
+	t1 := time.Now().UnixNano()
+	if result, err := s.GetFromCache(ctx, key, timestamp); err == nil {
+		fmt.Printf("Get from cache, time (ns): %d", time.Now().UnixNano()-t1)
+		return result, nil
 	}
 
-	query := `
-		SELECT price, timestamp, ABS(timestamp - $2) AS diff
-		FROM currencies
-		WHERE coin = $1
-		ORDER BY diff
-		LIMIT 1
-	`
-	var result float64
-	var foundTimestamp int64
-	err := s.db.QueryRow(query, coin, timestamp).Scan(&result, &foundTimestamp, nil)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %v", op, err)
-	}
-
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	//delete old lines from redis
-	if !Cached {
-		if keys, err := s.redis.Keys(ctx, "*").Result(); err == nil && len(keys) >= maxTokenCount {
-			var oldestKey string
-			minTTL := time.Duration(1<<63 - 1)
-
-			for _, k := range keys {
-				if ttl, err := s.redis.TTL(ctx, k).Result(); err == nil && ttl < minTTL {
-					minTTL = ttl
-					oldestKey = k
-				}
-			}
-
-			if oldestKey != "" {
-				s.redis.Del(ctx, oldestKey)
-			}
-		}
-
-		s.redis.HSet(ctx, key, fmt.Sprintf("%d", foundTimestamp), result)
-		s.redis.Expire(ctx, key, cacheTTL)
-	} else {
-		s.redis.HSet(ctx, key, fmt.Sprintf("%d", foundTimestamp), result)
-	}
-
-	return result, nil
-}
-
-func (s *Storage) isTokenCached(coin string) bool {
-	ctx := context.Background()
-	exists, err := s.redis.Exists(ctx, coin).Result()
-	return err == nil && exists == 1
-}
-
-// findNearestCachedPrice finds price closest to requested timestamp in cache.
-// Parameters:
-// - ctx: context
-// - key: Redis key (cryptocurrency symbol)
-// - timestamp: target Unix timestamp
-// Returns:
-// - float64: nearest price found
-// - error: if no cached data available
-func (s *Storage) findNearestCachedPrice(ctx context.Context, key string, timestamp int64) (float64, error) {
-	allData, err := s.redis.HGetAll(ctx, key).Result()
+	price, dbTimestamp, err := s.getFromDB(coin, timestamp)
 	if err != nil {
 		return 0, err
 	}
 
-	var nearestPrice float64
-	minDiff := int64(1<<63 - 1)
+	s.Redis.ZAdd(ctx, "token:lru", &redis.Z{
+		Score:  float64(time.Now().Unix()),
+		Member: coin,
+	})
 
-	for tsStr, priceStr := range allData {
-		cacheTime, err := strconv.ParseInt(tsStr, 10, 64)
-		if err != nil {
-			continue
-		}
-		diff := abs(cacheTime - timestamp)
-		if diff < minDiff {
-			minDiff = diff
-			nearestPrice, _ = strconv.ParseFloat(priceStr, 64)
-		}
+	if abs(timestamp-dbTimestamp) <= 300 {
+		s.UpdateCache(coin, price, dbTimestamp)
 	}
 
-	if minDiff == int64(1<<63-1) {
-		return 0, fmt.Errorf("no cached data found")
-	}
-
-	return nearestPrice, nil
+	fmt.Printf("Get from PostgresQL, time (ns): %d", time.Now().UnixNano()-t1)
+	return price, nil
 }
 
 // Shutdown gracefully stops all background operations.
 func (s *Storage) Shutdown() {
-	close(s.shutdown)
+	close(s.Shutdwn)
 	s.wg.Wait()
 
-	if err := s.db.Close(); err != nil {
+	if err := s.DB.Close(); err != nil {
 		log.Printf("Error closing database: %v", err)
 	}
 
-	if err := s.redis.Close(); err != nil {
+	if err := s.Redis.Close(); err != nil {
 		log.Printf("Error closing Redis: %v", err)
 	}
 }
@@ -377,9 +331,12 @@ func (s *Storage) RemoveCurrency(coin string) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	if stopChan, exists := s.activeCoins[coin]; exists {
+	if stopChan, exists := s.ActiveCoins[coin]; exists {
 		close(stopChan)
-		delete(s.activeCoins, coin)
+		delete(s.ActiveCoins, coin)
+		ctx := context.Background()
+		s.Redis.ZRem(ctx, "token:lru", coin)
+		s.Redis.Del(ctx, fmt.Sprintf("token:%s", coin))
 	}
 }
 

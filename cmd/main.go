@@ -1,10 +1,11 @@
-package cmd
+package main
 
 import (
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	"log"
+	_ "test-task1/docs"
 	handlers "test-task1/internal/service"
 	"test-task1/internal/storage"
 	"test-task1/models"
@@ -19,7 +20,6 @@ func setupRouter(storage *storage.Storage) *gin.Engine {
 
 	currencyHandler := handlers.NewCurrencyHandler(storage)
 
-	// Swagger
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// API endpoints
@@ -44,6 +44,6 @@ func main() {
 
 	r := setupRouter(db)
 	if err := r.Run(":8080"); err != nil {
-		log.Fatalf("run error ")
+		log.Fatalf("run error: %v", err)
 	}
 }
