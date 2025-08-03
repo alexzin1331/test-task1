@@ -146,13 +146,11 @@ func TestShutdown(t *testing.T) {
 		Shutdwn:     make(chan struct{}),
 	}
 
-	// Добавляем тестовые данные
 	mockStorage.ActiveCoins["ETH"] = make(chan struct{})
 	mockStorage.ActiveCoins["BTC"] = make(chan struct{})
 
 	mockStorage.Shutdown()
 
-	// Проверяем что соединения закрыты
 	assert.Error(t, db.Ping(), "DB connection should be closed")
 	_, err = rdb.Ping(context.Background()).Result()
 	assert.Error(t, err, "Redis connection should be closed")
@@ -174,10 +172,8 @@ func TestCacheOperations(t *testing.T) {
 	testPrice := 50000.0
 	coin := "BTC"
 
-	// Тест updateCache
 	mockStorage.UpdateCache(coin, testPrice, testTime)
 
-	// Проверяем что данные добавились в Redis
 	member := fmt.Sprintf("%d:%f", testTime, testPrice)
 	key := fmt.Sprintf("token:%s", coin)
 	results, err := rdb.ZRangeByScore(ctx, key, &redis.ZRangeBy{

@@ -99,6 +99,7 @@ func New(c models.Config) (*Storage, error) {
 		return nil, fmt.Errorf("%s: %v", op, err)
 	}
 
+	//Try to connect DB
 	if err = waitForDB(db, 5, 1*time.Second); err != nil {
 		return nil, fmt.Errorf("%s: %v", op, err)
 	}
@@ -192,7 +193,7 @@ func (s *Storage) startCollecting(coin string, stopChan <-chan struct{}) {
 	}
 }
 
-// updateCache updates Redis cache with new price data and cleans expired entries.
+// UpdateCache updates Redis cache with new price data and cleans expired entries.
 // Parameters:
 // - coin: cryptocurrency symbol
 // - price: current price
@@ -201,20 +202,24 @@ func (s *Storage) UpdateCache(coin string, price float64, timestamp int64) {
 	ctx := context.Background()
 	key := fmt.Sprintf("token:%s", coin)
 
+	//
 	pipe := s.Redis.Pipeline()
 	pipe.ZAdd(ctx, key, &redis.Z{
 		Score:  float64(timestamp),
 		Member: fmt.Sprintf("%d:%f", timestamp, price),
 	})
 
+	//delete old lines (> 4 hour ago)
 	pipe.ZRemRangeByScore(ctx, key, "0", strconv.FormatInt(time.Now().Add(-dataRetention).Unix(), 10))
 
+	//Add token to LRU
 	pipe.Expire(ctx, key, cacheTTL)
 	pipe.ZAdd(ctx, "token:lru", &redis.Z{
 		Score:  float64(time.Now().Unix()),
 		Member: coin,
 	})
 
+	//Update LRU on len
 	if count, err := pipe.ZCard(ctx, "token:lru").Result(); err == nil && count > maxTokenCount {
 		pipe.ZPopMin(ctx, "token:lru", 1)
 	}
@@ -239,6 +244,7 @@ func (s *Storage) GetFromCache(ctx context.Context, key string, timestamp int64)
 	return strconv.ParseFloat(parts[1], 64)
 }
 
+//getFromDB gets data from DB
 func (s *Storage) getFromDB(coin string, timestamp int64) (float64, int64, error) {
 	var price float64
 	var dbTimestamp int64
@@ -286,7 +292,9 @@ func (s *Storage) SaveCurrency(coin string, price float64, timestamp int64) {
 func (s *Storage) GetPrice(coin string, timestamp int64) (float64, error) {
 	ctx := context.Background()
 	key := fmt.Sprintf("token:%s", coin)
-	t1 := time.Now().UnixNano()
+	t1 := time.Now().UnixNano() //For time tests
+
+	// Try to take data from cache
 	if result, err := s.GetFromCache(ctx, key, timestamp); err == nil {
 		fmt.Printf("Get from cache, time (ns): %d", time.Now().UnixNano()-t1)
 		return result, nil
@@ -297,11 +305,13 @@ func (s *Storage) GetPrice(coin string, timestamp int64) (float64, error) {
 		return 0, err
 	}
 
+	// Update LRU
 	s.Redis.ZAdd(ctx, "token:lru", &redis.Z{
 		Score:  float64(time.Now().Unix()),
 		Member: coin,
 	})
 
+	// Update cache if data actual
 	if abs(timestamp-dbTimestamp) <= 300 {
 		s.UpdateCache(coin, price, dbTimestamp)
 	}
@@ -335,6 +345,7 @@ func (s *Storage) RemoveCurrency(coin string) {
 		close(stopChan)
 		delete(s.ActiveCoins, coin)
 		ctx := context.Background()
+		//delete from redis
 		s.Redis.ZRem(ctx, "token:lru", coin)
 		s.Redis.Del(ctx, fmt.Sprintf("token:%s", coin))
 	}
